@@ -1,0 +1,444 @@
+import { useEffect, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useAppContext } from "@/context/AppContext";
+import { Finance } from "@shared/schema";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { formatDateCZ, getTodayDate } from "@/lib/utils";
+import { Pencil, Trash2, ArrowDown, ArrowUp, Wallet } from "lucide-react";
+import { 
+  calculateTotalIncome, 
+  calculateTotalExpenses, 
+  calculateBalance
+} from "@/lib/calculations";
+
+export default function Finances() {
+  const { showLoading, hideLoading, showNotification, setActiveSection, expenseCategories } = useAppContext();
+  const queryClient = useQueryClient();
+
+  // Form state
+  const [editId, setEditId] = useState("");
+  const [transactionType, setTransactionType] = useState<"income" | "expense">("income");
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("CZK");
+  const [date, setDate] = useState(getTodayDate());
+  const [category, setCategory] = useState("");
+  const [person, setPerson] = useState("");
+
+  // Fetch finances
+  const { data: finances = [], isLoading } = useQuery({
+    queryKey: ["/api/finances"],
+  });
+
+  // Set active section
+  useEffect(() => {
+    setActiveSection("finances");
+    document.title = "Finance | TimeTrack Pro";
+  }, [setActiveSection]);
+
+  // Reset form
+  const resetForm = () => {
+    setEditId("");
+    setTransactionType("income");
+    setDescription("");
+    setAmount("");
+    setCurrency("CZK");
+    setDate(getTodayDate());
+    setCategory("");
+    setPerson("");
+  };
+
+  // Mutation for creating/updating finance records
+  const financeMutation = useMutation({
+    mutationFn: async (formData: any) => {
+      if (editId) {
+        return apiRequest("PUT", `/api/finances/${editId}`, formData);
+      } else {
+        return apiRequest("POST", "/api/finances", formData);
+      }
+    },
+    onSuccess: () => {
+      // Reset form and invalidate queries
+      resetForm();
+      queryClient.invalidateQueries({ queryKey: ["/api/finances"] });
+      showNotification(
+        editId ? "Transakce byla upravena" : "Transakce byla přidána", 
+        "success"
+      );
+    },
+    onError: (error) => {
+      console.error("Error saving finance:", error);
+      showNotification("Chyba při ukládání transakce", "error");
+    },
+  });
+
+  // Delete finance mutation
+  const deleteFinance = useMutation({
+    mutationFn: async (id: number) => {
+      return apiRequest("DELETE", `/api/finances/${id}`, undefined);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/finances"] });
+      showNotification("Transakce byla smazána", "success");
+    },
+    onError: (error) => {
+      console.error("Error deleting finance:", error);
+      showNotification("Chyba při mazání transakce", "error");
+    }
+  });
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    showLoading();
+
+    try {
+      // Validate inputs
+      if (!description) {
+        showNotification("Zadejte popis transakce", "error");
+        hideLoading();
+        return;
+      }
+
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        showNotification("Zadejte platnou částku", "error");
+        hideLoading();
+        return;
+      }
+
+      // Prepare finance data
+      const financeData = {
+        type: transactionType,
+        description,
+        amount: parsedAmount,
+        currency,
+        date,
+        category,
+        person,
+      };
+
+      // Submit form
+      await financeMutation.mutateAsync(financeData);
+    } catch (error) {
+      console.error("Error processing form:", error);
+      showNotification("Chyba při zpracování formuláře", "error");
+    } finally {
+      hideLoading();
+    }
+  };
+
+  const handleEditFinance = (finance: Finance) => {
+    setEditId(finance.id.toString());
+    setTransactionType(finance.type as "income" | "expense");
+    setDescription(finance.description);
+    setAmount(finance.amount.toString());
+    setCurrency(finance.currency);
+    setDate(finance.date);
+    setCategory(finance.category || "");
+    setPerson(finance.person || "");
+  };
+
+  const handleDeleteFinance = async (id: number) => {
+    if (window.confirm("Opravdu chcete smazat tuto transakci?")) {
+      showLoading();
+      try {
+        await deleteFinance.mutateAsync(id);
+      } catch (error) {
+        console.error("Failed to delete finance:", error);
+      } finally {
+        hideLoading();
+      }
+    }
+  };
+
+  const handleCancelEdit = () => {
+    resetForm();
+  };
+
+  // Calculate totals
+  const totalIncome = calculateTotalIncome(finances);
+  const totalExpenses = calculateTotalExpenses(finances);
+  const balance = calculateBalance(finances);
+
+  return (
+    <div className="space-y-8">
+      <h2 className="text-2xl font-bold text-foreground mb-6">Finance</h2>
+      
+      {/* Add Transaction Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Přidat finanční transakci</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form id="finance-form" onSubmit={handleFormSubmit} className="space-y-6">
+            <input type="hidden" value={editId} />
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left Column */}
+              <div className="space-y-5">
+                {/* Transaction Type */}
+                <div className="space-y-2">
+                  <Label htmlFor="finance-type">Typ transakce</Label>
+                  <Select
+                    value={transactionType}
+                    onValueChange={(value: "income" | "expense") => setTransactionType(value)}
+                  >
+                    <SelectTrigger id="finance-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="income">Příjem</SelectItem>
+                      <SelectItem value="expense">Výdaj</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {/* Description */}
+                <div className="space-y-2">
+                  <Label htmlFor="finance-description">Popis</Label>
+                  <Input
+                    id="finance-description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Popis transakce"
+                  />
+                </div>
+                
+                {/* Amount */}
+                <div className="space-y-2">
+                  <Label htmlFor="finance-amount">Částka</Label>
+                  <Input
+                    id="finance-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+              
+              {/* Right Column */}
+              <div className="space-y-5">
+                {/* Currency */}
+                <div className="space-y-2">
+                  <Label htmlFor="finance-currency">Měna</Label>
+                  <Select
+                    value={currency}
+                    onValueChange={setCurrency}
+                  >
+                    <SelectTrigger id="finance-currency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CZK">CZK - Česká koruna</SelectItem>
+                      <SelectItem value="EUR">EUR - Euro</SelectItem>
+                      <SelectItem value="USD">USD - Americký dolar</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {/* Date */}
+                <div className="space-y-2">
+                  <Label htmlFor="finance-date">Datum</Label>
+                  <Input
+                    id="finance-date"
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                  />
+                </div>
+                
+                {/* Category (for expenses) */}
+                {transactionType === "expense" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="finance-category">Kategorie</Label>
+                    <Select
+                      value={category}
+                      onValueChange={setCategory}
+                    >
+                      <SelectTrigger id="finance-category">
+                        <SelectValue placeholder="-- Vyberte kategorii --" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">-- Vyberte kategorii --</SelectItem>
+                        {expenseCategories.map((cat) => (
+                          <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* Person (optional) */}
+                <div className="space-y-2">
+                  <Label htmlFor="finance-person">Osoba (volitelné)</Label>
+                  <Select
+                    value={person}
+                    onValueChange={setPerson}
+                  >
+                    <SelectTrigger id="finance-person">
+                      <SelectValue placeholder="-- Vyberte osobu --" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">-- Vyberte osobu --</SelectItem>
+                      <SelectItem value="maru">Maru</SelectItem>
+                      <SelectItem value="marty">Marty</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+            
+            {/* Form Buttons */}
+            <div className="flex flex-wrap space-x-3">
+              <Button type="submit" id="save-finance-button">
+                {editId ? "Uložit změny" : "Přidat"}
+              </Button>
+              {editId && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  id="cancel-finance-edit-button"
+                  onClick={handleCancelEdit}
+                >
+                  Zrušit úpravy
+                </Button>
+              )}
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+      
+      {/* Summary Stats Card */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Total Income */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium text-foreground">Celkem příjmy</h3>
+              <ArrowDown className="h-5 w-5 text-green-500" />
+            </div>
+            <p className="text-3xl font-bold text-green-500">{totalIncome.toFixed(0)} Kč</p>
+            <p className="text-sm text-muted-foreground mt-1">Tento měsíc</p>
+          </CardContent>
+        </Card>
+        
+        {/* Total Expenses */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium text-foreground">Celkem výdaje</h3>
+              <ArrowUp className="h-5 w-5 text-destructive" />
+            </div>
+            <p className="text-3xl font-bold text-destructive">{totalExpenses.toFixed(0)} Kč</p>
+            <p className="text-sm text-muted-foreground mt-1">Tento měsíc</p>
+          </CardContent>
+        </Card>
+        
+        {/* Balance */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium text-foreground">Bilance</h3>
+              <Wallet className="h-5 w-5 text-primary" />
+            </div>
+            <p className={`text-3xl font-bold ${balance >= 0 ? 'text-primary' : 'text-destructive'}`}>{balance.toFixed(0)} Kč</p>
+            <p className="text-sm text-muted-foreground mt-1">Tento měsíc</p>
+          </CardContent>
+        </Card>
+      </div>
+      
+      {/* Transactions Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Transakce</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            {isLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              </div>
+            ) : finances.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Nebyly nalezeny žádné transakce
+              </div>
+            ) : (
+              <table className="min-w-full">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground uppercase tracking-wider border-b border-border">
+                    <th className="px-4 py-3 font-medium">Typ</th>
+                    <th className="px-4 py-3 font-medium">Popis</th>
+                    <th className="px-4 py-3 font-medium">Částka</th>
+                    <th className="px-4 py-3 font-medium">Měna</th>
+                    <th className="px-4 py-3 font-medium">Datum</th>
+                    <th className="px-4 py-3 font-medium">Kategorie</th>
+                    <th className="px-4 py-3 font-medium">Osoba</th>
+                    <th className="px-4 py-3 font-medium">Akce</th>
+                  </tr>
+                </thead>
+                <tbody id="finance-table">
+                  {finances.map((finance: Finance) => (
+                    <tr key={finance.id} className="border-b border-border">
+                      <td className="px-4 py-3 text-sm">
+                        <span className={finance.type === "income" ? "text-green-500" : "text-destructive"}>
+                          {finance.type === "income" ? "Příjem" : "Výdaj"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm">{finance.description}</td>
+                      <td className={`px-4 py-3 text-sm font-medium ${finance.type === "income" ? "text-green-500" : "text-destructive"}`}>
+                        {finance.amount.toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{finance.currency}</td>
+                      <td className="px-4 py-3 text-sm">{formatDateCZ(finance.date)}</td>
+                      <td className="px-4 py-3 text-sm">{finance.category || ""}</td>
+                      <td className="px-4 py-3 text-sm">
+                        {finance.person ? (finance.person === "maru" ? "Maru" : "Marty") : ""}
+                      </td>
+                      <td className="px-4 py-3 text-sm whitespace-nowrap">
+                        <div className="flex space-x-2">
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={() => handleEditFinance(finance)}
+                            className="h-8 w-8 text-primary"
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span className="sr-only">Upravit</span>
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={() => handleDeleteFinance(finance.id)}
+                            className="h-8 w-8 text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">Smazat</span>
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
